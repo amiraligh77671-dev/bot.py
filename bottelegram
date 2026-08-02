@@ -1,0 +1,198 @@
+# ============================================
+# 🤖 ربات سلف هوشمند ALFA (نسخه واقعی با Telethon)
+# ============================================
+
+import sqlite3
+import re
+from datetime import datetime, timezone, timedelta
+from telethon import TelegramClient, events, errors
+from telethon.tl.types import MessageEntityBold, MessageEntityItalic, MessageEntityUnderline, MessageEntityStrike, MessageEntityCode
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
+# ---------- تنظیمات ----------
+BOT_TOKEN = "8628096305:AAGPGHp9FfEET2tejQiohneX32XAAyybz5A"
+API_ID = 2040
+API_HASH = "b18441a1ff607e10a989891a5462e627"
+CHANNEL_USERNAME = "@amirshop_us1"
+
+# ---------- دیتابیس ----------
+conn = sqlite3.connect("alfa_self.db", check_same_thread=False)
+c = conn.cursor()
+c.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        phone TEXT,
+        session_string TEXT,
+        bold INTEGER DEFAULT 0,
+        italic INTEGER DEFAULT 0,
+        underline INTEGER DEFAULT 0,
+        strike INTEGER DEFAULT 0,
+        monospace INTEGER DEFAULT 0,
+        color TEXT DEFAULT 'مشکی',
+        size TEXT DEFAULT 'متوسط',
+        clock INTEGER DEFAULT 0,
+        date INTEGER DEFAULT 0,
+        convert_numbers INTEGER DEFAULT 0,
+        theme TEXT DEFAULT 'light'
+    )
+""")
+conn.commit()
+
+# ---------- توابع کمکی ----------
+def get_user_settings(user_id):
+    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    if row:
+        columns = [desc[0] for desc in c.description]
+        return dict(zip(columns, row))
+    return None
+
+def update_setting(user_id, key, value):
+    c.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
+    conn.commit()
+
+def init_user(user_id):
+    if not get_user_settings(user_id):
+        c.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+
+# ---------- دکمه‌های منو ----------
+MAIN_MENU = InlineKeyboardMarkup([
+    [InlineKeyboardButton("📝 تنظیمات پیام", callback_data="msg_settings")],
+    [InlineKeyboardButton("🎨 شخصیسازی", callback_data="customize")],
+    [InlineKeyboardButton("⏰ زمان و تاریخ", callback_data="time_settings")],
+    [InlineKeyboardButton("📊 وضعیت فعلی", callback_data="status")],
+    [InlineKeyboardButton("❌ خروج از پنل", callback_data="exit")]
+])
+
+def get_msg_settings_keyboard(user_id):
+    s = get_user_settings(user_id)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🖊 بولد {'[✔]' if s['bold'] else '[✖]'}", callback_data="toggle_bold")],
+        [InlineKeyboardButton(f"✏️ ایتالیک {'[✔]' if s['italic'] else '[✖]'}", callback_data="toggle_italic")],
+        [InlineKeyboardButton(f"════ زیرخط {'[✔]' if s['underline'] else '[✖]'}", callback_data="toggle_underline")],
+        [InlineKeyboardButton(f"~~ خط‌خورده {'[✔]' if s['strike'] else '[✖]'}", callback_data="toggle_strike")],
+        [InlineKeyboardButton(f"┃ یکدست {'[✔]' if s['monospace'] else '[✖]'}", callback_data="toggle_monospace")],
+        [InlineKeyboardButton("🔙 برگشت به ALFA", callback_data="main_menu")]
+    ])
+
+def get_time_settings_keyboard(user_id):
+    s = get_user_settings(user_id)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"⏰ ساعت ایران {'[✔]' if s['clock'] else '[✖]'}", callback_data="toggle_clock")],
+        [InlineKeyboardButton(f"📅 تاریخ شمسی {'[✔]' if s['date'] else '[✖]'}", callback_data="toggle_date")],
+        [InlineKeyboardButton(f"🔄 تبدیل اعداد {'[✔]' if s['convert_numbers'] else '[✖]'}", callback_data="toggle_convert")],
+        [InlineKeyboardButton("🔙 برگشت به ALFA", callback_data="main_menu")]
+    ])
+
+# ---------- دستورات ربات ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    init_user(user_id)
+    await update.message.reply_text(
+        "⚡ به **سلف هوشمند ALFA** خوش اومدی!\n\n"
+        "لطفاً شماره تلفن خود را وارد کنید تا ربات به اکانت شما متصل شود.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📱 ارسال شماره", callback_data="send_phone")]])
+    )
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    data = query.data
+
+    if data == "main_menu":
+        await query.edit_message_text("⚡ به **سلف هوشمند ALFA** خوش اومدی!", reply_markup=MAIN_MENU)
+    elif data == "msg_settings":
+        await query.edit_message_text("📝 **تنظیمات پیام ALFA**", reply_markup=get_msg_settings_keyboard(user_id))
+    elif data == "time_settings":
+        await query.edit_message_text("⏰ **زمان و تاریخ ALFA**", reply_markup=get_time_settings_keyboard(user_id))
+    elif data == "status":
+        s = get_user_settings(user_id)
+        text = f"""
+✅ **وضعیت فعلی شما در ALFA:**
+
+🖊 بولد: {'فعال' if s['bold'] else 'غیرفعال'}
+✏️ ایتالیک: {'فعال' if s['italic'] else 'غیرفعال'}
+════ زیرخط: {'فعال' if s['underline'] else 'غیرفعال'}
+~~ خط‌خورده: {'فعال' if s['strike'] else 'غیرفعال'}
+┃ یکدست: {'فعال' if s['monospace'] else 'غیرفعال'}
+⏰ ساعت ایران: {'فعال' if s['clock'] else 'غیرفعال'}
+📅 تاریخ شمسی: {'فعال' if s['date'] else 'غیرفعال'}
+🔄 تبدیل اعداد: {'فعال' if s['convert_numbers'] else 'غیرفعال'}
+"""
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 برگشت به ALFA", callback_data="main_menu")]]))
+    elif data == "exit":
+        await query.edit_message_text("👋 خداحافظ! برای بازگشت /start رو بزن.")
+    elif data.startswith("toggle_"):
+        key = data.replace("toggle_", "")
+        s = get_user_settings(user_id)
+        new_val = 0 if s[key] else 1
+        update_setting(user_id, key, new_val)
+        await query.edit_message_text(
+            f"✅ {key} {'فعال' if new_val else 'غیرفعال'} شد.",
+            reply_markup=get_msg_settings_keyboard(user_id) if key in ["bold","italic","underline","strike","monospace"] else get_time_settings_keyboard(user_id) if key in ["clock","date","convert_numbers"] else MAIN_MENU
+        )
+
+# ---------- بخش Telethon (سلف واقعی) ----------
+user_clients = {}  # ذخیره کلاینت‌های هر کاربر
+
+async def handle_telethon_messages(client, user_id):
+    @client.on(events.NewMessage(outgoing=True))
+    async def on_outgoing(event):
+        s = get_user_settings(user_id)
+        if not s:
+            return
+        text = event.raw_text
+        if not text:
+            return
+
+        # تبدیل اعداد
+        if s["convert_numbers"]:
+            def num_to_words(n):
+                words = ["صفر","یک","دو","سه","چهار","پنج","شش","هفت","هشت","نه","ده"]
+                try:
+                    return words[int(n)] if 0 <= int(n) <= 10 else n
+                except:
+                    return n
+            text = re.sub(r'\d+', lambda x: num_to_words(x.group()), text)
+
+        # اضافه کردن ساعت و تاریخ
+        if s["clock"] or s["date"]:
+            now = datetime.now(timezone(timedelta(hours=3, minutes=30)))
+            time_str = now.strftime("%H:%M") if s["clock"] else ""
+            date_str = now.strftime("%Y/%m/%d") if s["date"] else ""
+            if s["clock"] and s["date"]:
+                text = f"[{time_str} - {date_str}] {text}"
+            elif s["clock"]:
+                text = f"[{time_str}] {text}"
+            elif s["date"]:
+                text = f"[{date_str}] {text}"
+
+        # ساخت entities
+        entities = []
+        if s["bold"]:
+            entities.append(MessageEntityBold(0, len(text)))
+        if s["italic"]:
+            entities.append(MessageEntityItalic(0, len(text)))
+        if s["underline"]:
+            entities.append(MessageEntityUnderline(0, len(text)))
+        if s["strike"]:
+            entities.append(MessageEntityStrike(0, len(text)))
+        if s["monospace"]:
+            entities.append(MessageEntityCode(0, len(text)))
+
+        # ارسال پیام با فرمت
+        await event.edit(text, formatting_entities=entities)
+
+# ---------- اجرا ----------
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    print("🤖 ربات ALFA روشن شد...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
