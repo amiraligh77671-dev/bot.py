@@ -1,2 +1,2 @@
-# bot.py
-ربات سلف
+python-telegram-bot
+telethon
